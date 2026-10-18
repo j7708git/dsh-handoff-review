@@ -134,9 +134,11 @@ test('buildHandoff marks an unavailable created file without fake diff lines', (
 })
 
 test('redactSecrets removes credential-looking values', () => {
-  const redacted = redactSecrets('+API_TOKEN=super-secret-value\n+password: hunter2\n+DATABASE_URL=keep-me')
-  assert.ok(!redacted.includes('super-secret-value'))
-  assert.ok(!redacted.includes('hunter2'))
+  // Deliberately non-secret placeholders: the rule keys on the credential names
+  // (`API_TOKEN`, `password`), not on the value shape.
+  const redacted = redactSecrets('+API_TOKEN=<fixture-token>\n+password: <fixture-password>\n+DATABASE_URL=keep-me')
+  assert.ok(!redacted.includes('<fixture-token>'))
+  assert.ok(!redacted.includes('<fixture-password>'))
 })
 
 test('buildReviewBrief starts with the source marker and states read-only rules', () => {

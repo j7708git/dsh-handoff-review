@@ -218,6 +218,8 @@ test('createRouteDefinitions mounts the exact M1+M2 paths', () => {
       '/handoff-review/api/config',
       '/handoff-review/api/panel',
       '/handoff-review/api/diff',
+      '/handoff-review/api/continuation/preview',
+      '/handoff-review/api/continuation/start',
     ],
   )
   assert.ok(routes.every((route) => route.kind === 'exact'))

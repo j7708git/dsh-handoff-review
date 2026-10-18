@@ -6,9 +6,17 @@
 // explicit cross-session delivery with loop protection, a slash command, and a
 // fenced HTTP surface for the composer dock (see DEVELOPMENT.md).
 //
+// The same entry also hosts the continuation handoff ("交接續作"): one preview
+// route builds a deterministic prompt (plus one optional LLM summary), and one
+// start route creates an ordinary writable session in the same workspace whose
+// first user message is that prompt. No link record, no loop breaker, no
+// storage write: the new session's own first user message is the durable state.
+//
 // Nothing here mutates DSH kernel state: no new session event type is written,
 // no session log is rewritten, and the reviewer only ever receives an official
 // `sandbox/mode` override plus scoped tool restrictions.
+
+import { randomUUID } from 'node:crypto'
 
 import Schema from '@deepseek-ai/schemastery'
 
@@ -19,6 +27,10 @@ import {
   REPLY_PROJECTION_KEY,
 } from './lib/projections.js'
 import {
+  appendContinuationSupplement,
+  buildContinuationPrompt,
+  buildContinuationTitle,
+  buildContinuationTranscript,
   buildFeedbackMessage,
   buildHandoff,
   buildReviewBrief,
@@ -26,15 +38,21 @@ import {
   collectChangedFiles,
   extractGoal,
   extractOpenQuestions,
+  MAX_CONTINUATION_SUPPLEMENT_CHARS,
 } from './lib/handoff-builder.js'
 import {
   applyReviewerPolicy,
   collectSessionMessages,
+  continuationCatalogRouteKeys,
+  continuationRouteKey,
+  createContinuationSession,
   createReviewSession,
   findLiveAgent,
   hydrateCreatedEntries,
   listArchivedSessionIds,
+  resolveContinuationRoute,
   sessionExists,
+  summarizeContinuation,
   summarizeHandoff,
   SessionFactoryError,
 } from './lib/session-factory.js'
@@ -178,6 +196,140 @@ export function locateLink(store, sessionId) {
 /** How many handoff entries a single session title may carry before truncation. */
 const TITLE_SCOPE_CHARS = 60
 
+/** How long a continuation preview draft may be started after it was built. */
+export const CONTINUATION_DRAFT_TTL_MS = 15 * 60 * 1000
+
+/** How many continuation drafts (at most one per source session) are retained. */
+const MAX_CONTINUATION_DRAFTS = 8
+
+/** Stable effort-id syntax accepted by the continuation start path. */
+const CONTINUATION_EFFORT_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/
+
+/**
+ * Stable provider/model-id syntax accepted by the continuation start path: a
+ * non-empty trimmed string without whitespace or C0/C1/DEL control characters.
+ * Route ids come from live adapters (which may use characters such as `@` or
+ * `/`), so the check stays permissive; what actually constrains an override is
+ * the catalog snapshot the preview returned.
+ */
+const CONTINUATION_ROUTE_ID_RE = /^[^\s\u0000-\u001f\u007f-\u009f]{1,200}$/
+
+/**
+ * Normalize the continuation start's optional reasoning-effort input. A blank
+ * value means "use the model default"; a malformed value fails with `BAD_BODY`.
+ * @param {unknown} value raw request value
+ * @returns {string} empty string, or the validated effort id
+ */
+function normalizeContinuationEffort(value) {
+  if (value === undefined || value === null) return ''
+  if (typeof value !== 'string') throw new HandoffError('BAD_BODY', 'reasoningEffort 必須是字串。')
+  const effort = value.trim()
+  if (effort === '') return ''
+  if (!CONTINUATION_EFFORT_RE.test(effort)) {
+    throw new HandoffError('BAD_BODY', `reasoningEffort「${effort}」格式不合法。`)
+  }
+  return effort
+}
+
+/**
+ * Validate one optional continuation provider/model id. A whitespace-only or
+ * absent value means "not supplied"; an unsafe id fails with `BAD_BODY`.
+ * @param {string} field request field name (for the diagnostic)
+ * @param {unknown} value raw request value
+ * @returns {string} empty string, or the validated route id
+ */
+function normalizeContinuationRouteId(field, value) {
+  if (value === undefined || value === null) return ''
+  if (typeof value !== 'string') throw new HandoffError('BAD_BODY', `${field} 必須是字串。`)
+  const id = value.trim()
+  if (id === '') return ''
+  if (!CONTINUATION_ROUTE_ID_RE.test(id)) {
+    throw new HandoffError('BAD_BODY', `${field}「${id}」格式不合法。`)
+  }
+  return id
+}
+
+/**
+ * Validate the continuation start's optional model override. Absent/blank
+ * provider and model mean "keep the draft's source route"; a half pair or a
+ * malformed id fails with `BAD_BODY`.
+ * @param {unknown} provider raw request value
+ * @param {unknown} model raw request value
+ * @returns {{ provider: string, model: string } | null} the requested route, or null
+ */
+function normalizeContinuationRouteOverride(provider, model) {
+  const providerId = normalizeContinuationRouteId('provider', provider)
+  const modelId = normalizeContinuationRouteId('model', model)
+  if (providerId === '' && modelId === '') return null
+  if (providerId === '' || modelId === '') {
+    throw new HandoffError('BAD_BODY', 'provider 與 model 必須成對提供。')
+  }
+  return { provider: providerId, model: modelId }
+}
+
+/**
+ * Resolve which route the continuation session should use. Without an override
+ * the draft's source route is kept; with one, the pair must either be that
+ * source route or appear in the catalog snapshot the preview returned.
+ * `catalogKnown` distinguishes "the catalog was read" (even an empty catalog
+ * snapshot is authoritative: an override it never listed is rejected) from "no
+ * catalog metadata exists" (adapter without modelCatalog, or the read failed):
+ * only the latter stays lenient, because nothing was previewed to compare.
+ * @param {object} draft cached continuation draft
+ * @param {{ provider: string, model: string } | null} requested validated override
+ * @returns {{ provider: string, model: string }} the route to apply
+ */
+function resolveContinuationStartRoute(draft, requested) {
+  const sourceRoute = draft !== null && typeof draft === 'object' && draft.route !== null && typeof draft.route === 'object'
+    ? draft.route
+    : {}
+  const source = {
+    provider: typeof sourceRoute.provider === 'string' ? sourceRoute.provider : '',
+    model: typeof sourceRoute.model === 'string' ? sourceRoute.model : '',
+  }
+  if (requested === null) return source
+  const requestedKey = continuationRouteKey(requested.provider, requested.model)
+  const sourceKey = continuationRouteKey(source.provider, source.model)
+  const known = Array.isArray(draft.catalogRoutes) ? draft.catalogRoutes : []
+  const catalogKnown = draft.catalogKnown === true || known.length > 0
+  if (requestedKey !== sourceKey && catalogKnown && !known.includes(requestedKey)) {
+    throw new HandoffError(
+      'BAD_BODY',
+      `provider/model ${requested.provider}/${requested.model} 不在本次預覽的模型目錄中，請重新預覽。`,
+    )
+  }
+  return requested
+}
+
+/**
+ * Read the last non-empty assistant text from one derived-message list.
+ * @param {Array<object>} messages `Session.deriveMessages()` output
+ * @returns {string} the last assistant text (possibly empty)
+ */
+function latestAssistantText(messages) {
+  const list = Array.isArray(messages) ? messages : []
+  for (let index = list.length - 1; index >= 0; index -= 1) {
+    const message = list[index]
+    if (message === null || typeof message !== 'object' || message.role !== 'assistant') continue
+    if (!Array.isArray(message.content)) continue
+    const parts = []
+    for (const block of message.content) {
+      if (
+        block !== null
+        && typeof block === 'object'
+        && block.type === 'text'
+        && typeof block.text === 'string'
+        && block.text.trim() !== ''
+      ) {
+        parts.push(block.text)
+      }
+    }
+    const text = parts.join('\n').trim()
+    if (text !== '') return text
+  }
+  return ''
+}
+
 /**
  * Host-side handoff-review orchestration shared by the slash command, the dock
  * routes, the right-sidebar panel and the settings page. Expected failures throw
@@ -205,6 +357,10 @@ export class HandoffService {
     this.autoRevisionInFlight = new Set()
     /** One-shot automation-stop notices (keyed by link + round + content). */
     this.autoNoticeKeys = new Set()
+    /** Continuation preview drafts, keyed by draft id (one live draft per source session). */
+    this.continuationDrafts = new Map()
+    /** Source sessions with an in-flight continuation start (double-click guard). */
+    this.continuingSessions = new Set()
   }
 
   /**
@@ -378,6 +534,8 @@ export class HandoffService {
         close: active,
         reopen: link !== null && link.status === 'closed',
         panel: link !== null,
+        // Handoff continuation needs only a live source agent; it never creates a link.
+        continue: findLiveAgent(this.ctx, input.sessionId) !== undefined,
       },
       maxRounds: this.config.maxRounds,
     }
@@ -712,6 +870,238 @@ export class HandoffService {
     this.delivery.reset(link.id)
     this.clearAutoNotice(link.id)
     return { link: publicLink(updated), message: `Link ${link.id} reopened。` }
+  }
+
+  /**
+   * Read the source session's title through the optional `sessionTitle`
+   * service; a missing service or a read failure degrades to an empty title.
+   * @param {object} session live source Session
+   * @returns {string} the source title (possibly empty)
+   */
+  readContinuationSourceTitle(session) {
+    let service
+    try {
+      service = this.ctx.get('sessionTitle')
+    } catch {
+      service = undefined
+    }
+    if (service === undefined || typeof service.get !== 'function') return ''
+    try {
+      const snapshot = service.get(session)
+      return snapshot !== null && typeof snapshot === 'object' && typeof snapshot.title === 'string'
+        ? snapshot.title.trim()
+        : ''
+    } catch {
+      return ''
+    }
+  }
+
+  /**
+   * Store one continuation draft. Expired drafts are dropped first, at most one
+   * live draft per source session survives, and the cache is bounded to eight
+   * drafts (oldest first).
+   * @param {object} draft draft to store (draftId, sessionId, prompt, title, route, createdAt)
+   * @returns {void}
+   */
+  rememberContinuationDraft(draft) {
+    const now = Date.now()
+    for (const [draftId, candidate] of [...this.continuationDrafts]) {
+      const expired = !Number.isFinite(candidate.createdAt)
+        || now - candidate.createdAt > CONTINUATION_DRAFT_TTL_MS
+      if (expired || candidate.sessionId === draft.sessionId) this.continuationDrafts.delete(draftId)
+    }
+    this.continuationDrafts.set(draft.draftId, draft)
+    while (this.continuationDrafts.size > MAX_CONTINUATION_DRAFTS) {
+      const oldestId = this.continuationDrafts.keys().next().value
+      if (oldestId === undefined) break
+      this.continuationDrafts.delete(oldestId)
+    }
+  }
+
+  /**
+   * Validate one continuation draft for a start call. The draft stays cached
+   * until the start succeeds (so a failed start can be retried); the caller
+   * deletes it on success to enforce single use.
+   * @param {string} draftId draft id from the preview response
+   * @param {string} sessionId source session id
+   * @returns {object} the cached draft
+   * @throws {HandoffError} `DRAFT_EXPIRED` when unknown, expired, or for another session
+   */
+  resolveContinuationDraft(draftId, sessionId) {
+    const draft = this.continuationDrafts.get(draftId)
+    if (draft === undefined) {
+      throw new HandoffError('DRAFT_EXPIRED', '交接草稿不存在或已使用，請重新預覽。')
+    }
+    const expired = !Number.isFinite(draft.createdAt)
+      || Date.now() - draft.createdAt > CONTINUATION_DRAFT_TTL_MS
+    if (expired || draft.sessionId !== sessionId) {
+      this.continuationDrafts.delete(draftId)
+      throw new HandoffError('DRAFT_EXPIRED', '交接草稿已過期或與 session 不符，請重新預覽。')
+    }
+    return draft
+  }
+
+  /**
+   * `POST /handoff-review/api/continuation/preview`: build the deterministic
+   * continuation prompt from the live source session, run the single optional
+   * LLM summary, resolve the source route plus the provider/model catalog for the
+   * dialog, and cache a one-shot draft for {@link HandoffService#startContinuation}.
+   * @param {{ sessionId: string }} input source session id
+   * @returns {Promise<{ draftId: string, prompt: string, chars: number, sourceTitle: string, cwd: string, route: { provider: string, model: string }, efforts: Array<{ id: string, name: string }>, defaultReasoningEffort: string, currentReasoningEffort: string, catalog: { groups: Array<object>, failures: Array<object> }, summarySource: 'llm' | 'deterministic', warnings: string[] }>} the preview payload
+   */
+  async previewContinuation(input) {
+    const sourceAgent = this.requireAgent(
+      input.sessionId,
+      'NO_IMPL_AGENT',
+      '目前 session 沒有 live agent，請先開啟該 session 再使用交接續作。',
+    )
+    const session = sourceAgent.session
+    const diffState = this.readDiffState(session)
+    const entries = await hydrateCreatedEntries(this.ctx, diffState.entries, this.config.diffPerFileChars)
+    const changes = collectChangedFiles(entries, { sinceSeq: -1 })
+    const messages = collectSessionMessages(sourceAgent)
+    const goal = extractGoal(messages)
+    const openQuestions = extractOpenQuestions(messages)
+    const transcript = buildContinuationTranscript(messages)
+    const summary = await summarizeContinuation(this.ctx, sourceAgent, {
+      goal,
+      changes,
+      verification: diffState.verification ?? null,
+      openQuestions,
+      transcript,
+      lastAssistantText: latestAssistantText(messages),
+    }, this.config)
+    const sourceTitle = this.readContinuationSourceTitle(session)
+    const headerCwd = session.header && typeof session.header.cwd === 'string' ? session.header.cwd : ''
+    const cwd = headerCwd !== '' ? headerCwd : process.cwd()
+    const title = buildContinuationTitle(sourceTitle)
+    const prompt = buildContinuationPrompt({
+      sourceSessionId: input.sessionId,
+      sourceTitle,
+      cwd,
+      goal,
+      summary: summary.text,
+      summarySource: summary.source,
+      changes,
+      verification: diffState.verification ?? null,
+      openQuestions,
+      warnings: summary.warnings,
+      config: this.config,
+    })
+    const routeInfo = await resolveContinuationRoute(this.ctx, sourceAgent)
+    const warnings = [...summary.warnings, ...routeInfo.warnings]
+    const draft = {
+      draftId: randomUUID(),
+      sessionId: input.sessionId,
+      prompt,
+      title,
+      cwd,
+      route: { provider: routeInfo.provider, model: routeInfo.model },
+      // Snapshot of the catalog the dialog could offer, so a later start can
+      // reject an override that was never previewed (or a stale/forged pair).
+      // `catalogKnown` keeps an authoritative empty snapshot distinct from "no
+      // catalog metadata at all" (which stays lenient on start).
+      catalogRoutes: continuationCatalogRouteKeys(routeInfo.catalog),
+      catalogKnown: routeInfo.catalogKnown === true,
+      createdAt: Date.now(),
+    }
+    this.rememberContinuationDraft(draft)
+    return {
+      draftId: draft.draftId,
+      prompt,
+      chars: prompt.length,
+      sourceTitle,
+      cwd,
+      route: { ...draft.route },
+      efforts: routeInfo.efforts.map((effort) => ({ ...effort })),
+      defaultReasoningEffort: routeInfo.defaultReasoningEffort,
+      currentReasoningEffort: routeInfo.currentReasoningEffort,
+      catalog: {
+        groups: routeInfo.catalog.groups.map((group) => ({
+          id: group.id,
+          name: group.name,
+          models: group.models.map((model) => ({
+            id: model.id,
+            name: model.name,
+            reasoningEfforts: model.reasoningEfforts.map((effort) => ({ ...effort })),
+            defaultReasoningEffort: model.defaultReasoningEffort,
+          })),
+        })),
+        failures: routeInfo.catalog.failures.map((failure) => ({ ...failure })),
+      },
+      summarySource: summary.source,
+      warnings,
+    }
+  }
+
+  /**
+   * `POST /handoff-review/api/continuation/start`: consume one preview draft and
+   * create a new ordinary writable session in the source session's workspace,
+   * seeding it with the previewed prompt (plus the optional user supplement) as
+   * its first user message. The optional provider/model pair overrides the
+   * source route chosen during preview.
+   * @param {{ sessionId: string, draftId: string, provider?: string | null, model?: string | null, reasoningEffort?: string | null, supplement?: string | null }} input start request
+   * @returns {Promise<{ sessionId: string, title: string, workspaceId: string | null, warnings: string[], message: string }>} the created session
+   */
+  async startContinuation(input) {
+    const sessionId = typeof input.sessionId === 'string' ? input.sessionId.trim() : ''
+    const draftId = typeof input.draftId === 'string' ? input.draftId.trim() : ''
+    if (sessionId === '' || draftId === '') {
+      throw new HandoffError('BAD_BODY', '缺少必要欄位 sessionId 或 draftId。')
+    }
+    const effort = normalizeContinuationEffort(input.reasoningEffort)
+    const requestedRoute = normalizeContinuationRouteOverride(input.provider, input.model)
+    if (input.supplement !== undefined && input.supplement !== null && typeof input.supplement !== 'string') {
+      throw new HandoffError('BAD_BODY', 'supplement 必須是字串。')
+    }
+    if (this.continuingSessions.has(sessionId)) {
+      throw new HandoffError('ALREADY_RUNNING', '這個 session 的交接續作正在建立中，請稍候。')
+    }
+    this.continuingSessions.add(sessionId)
+    try {
+      const sourceAgent = this.requireAgent(
+        sessionId,
+        'NO_IMPL_AGENT',
+        '目前 session 沒有 live agent，請先開啟該 session 再建立交接續作。',
+      )
+      const draft = this.resolveContinuationDraft(draftId, sessionId)
+      const route = resolveContinuationStartRoute(draft, requestedRoute)
+      const messageText = appendContinuationSupplement(draft.prompt, input.supplement)
+      let created
+      try {
+        created = await createContinuationSession(this.ctx, {
+          sourceAgent,
+          messageText,
+          title: draft.title,
+          route,
+          reasoningEffort: effort,
+        })
+      } catch (error) {
+        const message = error && error.message ? error.message : String(error)
+        if (error instanceof SessionFactoryError && error.sessionId !== undefined) {
+          // A session was created before this failure, and the error message
+          // already tells the user to open it: the one-shot draft is spent so a
+          // retry cannot spawn a second duplicate session (Retry re-previews).
+          this.continuationDrafts.delete(draft.draftId)
+          const enriched = new HandoffError(error.code, `${message}\n（continuation session id: ${error.sessionId}）`)
+          enriched.sessionId = error.sessionId
+          throw enriched
+        }
+        if (error instanceof HandoffError) throw error
+        throw new HandoffError('CREATE_FAILED', message)
+      }
+      this.continuationDrafts.delete(draft.draftId)
+      const warningText = created.warnings.length > 0 ? `\nWarnings:\n- ${created.warnings.join('\n- ')}` : ''
+      return {
+        sessionId: created.sessionId,
+        title: created.title,
+        workspaceId: created.workspaceId,
+        warnings: created.warnings,
+        message: `已建立交接續作 session ${created.sessionId}。${warningText}`,
+      }
+    } finally {
+      this.continuingSessions.delete(sessionId)
+    }
   }
 
   /**
@@ -1246,4 +1636,4 @@ export async function apply(ctx, rawConfig) {
   }
 }
 
-export { HandoffError }
+export { HandoffError, MAX_CONTINUATION_SUPPLEMENT_CHARS }

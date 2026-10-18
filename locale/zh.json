@@ -32,7 +32,9 @@
     "diff": "差異",
     "linkSelect": "選擇交接審查",
     "panelUnavailable": "右側欄無法使用。",
-    "openFailed": "無法開啟 session。"
+    "openFailed": "無法開啟 session。",
+    "continue": "交接",
+    "continueAria": "把目前 session 交接給新的續作 session"
   },
   "status": {
     "creating": "建立中",
@@ -121,5 +123,35 @@
     "close": "關閉",
     "fileCount": "{count} 個檔案",
     "truncated": "… 差異已截斷"
+  },
+  "dialog": {
+    "title": "交接至新 session",
+    "description": "以下內容會成為新 session 的第一則訊息，在此專案中接手目前的工作。",
+    "loading": "正在整理交接內容…",
+    "previewLabel": "交接內容（唯讀）",
+    "previewHint": "這是新 session 會收到的完整文字，已包含你的補充說明。",
+    "chars": "{count} 字元",
+    "providerLabel": "提供者",
+    "providerSameAsSource": "（與來源相同）",
+    "modelLabel": "模型",
+    "modelSource": "（來源模型）",
+    "effortLabel": "思考強度",
+    "effortDefault": "（模型預設）",
+    "effortUnavailable": "此模型未提供思考強度選項，將使用模型預設。",
+    "catalogUnavailable": "模型目錄不可用，目前無法選擇模型。",
+    "providersUnavailable": "部分提供者無法列出：{names}",
+    "supplementLabel": "補充說明（選填）",
+    "supplementPlaceholder": "新 session 需要知道、但交接內容未涵蓋的事項",
+    "cancel": "取消",
+    "confirm": "開始續作",
+    "confirming": "建立中…",
+    "error": "交接失敗：{message}",
+    "retry": "重試",
+    "summaryFallback": "無法取得模型摘要，已改用基本整理。",
+    "openFailed": "新 session 已建立，但無法開啟。",
+    "noSession": "請先開啟要交接的 session。",
+    "created": "新 session {id} 已就緒",
+    "warningsTitle": "新 session 已建立，但 Host 回報以下警告：",
+    "openCreated": "開啟 session"
   }
 }

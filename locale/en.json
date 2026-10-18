@@ -32,7 +32,9 @@
     "diff": "Diff",
     "linkSelect": "Select handoff review",
     "panelUnavailable": "Right sidebar is not available.",
-    "openFailed": "Could not open the session."
+    "openFailed": "Could not open the session.",
+    "continue": "Handoff",
+    "continueAria": "Hand off this session to a new continuation session"
   },
   "status": {
     "creating": "Creating",
@@ -121,5 +123,35 @@
     "close": "Close",
     "fileCount": "{count} files",
     "truncated": "… diff truncated"
+  },
+  "dialog": {
+    "title": "Handoff to a new session",
+    "description": "The prompt below becomes the first message in a new session in this project.",
+    "loading": "Preparing the handoff…",
+    "previewLabel": "Handoff prompt (read-only)",
+    "previewHint": "This is the exact text the new session receives, including your supplement.",
+    "chars": "{count} characters",
+    "providerLabel": "Provider",
+    "providerSameAsSource": "(Same as source)",
+    "modelLabel": "Model",
+    "modelSource": "(Source model)",
+    "effortLabel": "Thinking effort",
+    "effortDefault": "(Model default)",
+    "effortUnavailable": "This model reports no thinking-effort levels; the model default is used.",
+    "catalogUnavailable": "The model catalog is unavailable, so no model choice is offered.",
+    "providersUnavailable": "Some providers could not be listed: {names}",
+    "supplementLabel": "Supplement (optional)",
+    "supplementPlaceholder": "Anything the new session should know that the handoff prompt does not cover",
+    "cancel": "Cancel",
+    "confirm": "Start continuation",
+    "confirming": "Creating session…",
+    "error": "Handoff failed: {message}",
+    "retry": "Retry",
+    "summaryFallback": "The model summary was unavailable, so a basic fallback summary was used.",
+    "openFailed": "The new session could not be opened.",
+    "noSession": "Open the source session before handing it off.",
+    "created": "Session {id} is ready",
+    "warningsTitle": "The session was created, but the Host reported warnings:",
+    "openCreated": "Open session"
   }
 }

@@ -42,6 +42,21 @@ window.__ModuleLoader__.load({
     const DIFF_DRAWER_ORDER = 20
     const SETTINGS_ID = 'handoff-review'
     const SETTINGS_ORDER = 40
+    /** Continuation handoff (additive surface): dock button + dialog registrations. */
+    const CONTINUATION_DOCK_ID = 'handoff-continuation'
+    const CONTINUATION_DOCK_ORDER = 19
+    const CONTINUATION_DIALOG_ID = 'handoff-continuation-dialog'
+    const CONTINUATION_DIALOG_ORDER = 21
+    /** Host exact routes for the continuation handoff (DESIGN §3). */
+    const CONTINUATION_PREVIEW_PATH = '/handoff-review/api/continuation/preview'
+    const CONTINUATION_START_PATH = '/handoff-review/api/continuation/start'
+    /** Preview may run one LLM summary call, so both routes get longer bounds. */
+    const CONTINUATION_PREVIEW_TIMEOUT_MS = 25000
+    const CONTINUATION_START_TIMEOUT_MS = 40000
+    /** Mirrors the Host MAX_CONTINUATION_SUPPLEMENT_CHARS cap. */
+    const SUPPLEMENT_LIMIT = 4000
+    /** Exact supplement block the Host appends after the capped handoff prompt. */
+    const SUPPLEMENT_BLOCK_HEADING = '\n\n## User supplement\n'
     /** Per-session selected-link storage. */
     const LINK_STORAGE_PREFIX = 'dsh:handoff-review:link:'
     /** Guard against rendering an unbounded unified diff. */
@@ -183,7 +198,37 @@ window.__ModuleLoader__.load({
       '.hrd-empty{padding:6px 0;color:var(--dsw-alias-label-secondary)}' +
       '.hrd-error{color:var(--dsw-alias-state-error-primary);overflow-wrap:anywhere}' +
       '.hrd-truncated{padding:4px 9px;border-top:1px solid var(--dsw-alias-border-l1);color:var(--dsw-alias-label-secondary);font-size:11px}' +
-      '.hrd-foot{display:flex;align-items:center;justify-content:flex-end;gap:8px;flex:none;padding:9px 12px;border-top:1px solid var(--dsw-alias-border-l1)}'
+      '.hrd-foot{display:flex;align-items:center;justify-content:flex-end;gap:8px;flex:none;padding:9px 12px;border-top:1px solid var(--dsw-alias-border-l1)}' +
+      // ---- continuation handoff: dock button + lightweight modal ----
+      '.hrc-row{box-sizing:border-box;display:flex;justify-content:flex-end;align-items:center;gap:6px;width:calc(100% - var(--dsh-composer-side-clearance) - var(--dsh-composer-side-clearance));max-width:var(--dsh-composer-card-max-width);margin:0 auto;padding:0 2px;min-height:26px;min-width:0;flex:none;font-size:12px;line-height:1.35;color:var(--dsw-alias-label-secondary)}' +
+      '.hrc-backdrop{position:fixed;inset:0;z-index:80;display:flex;align-items:center;justify-content:center;padding:24px;background:var(--dsw-alias-bg-mask-1)}' +
+      '.hrc-panel{box-sizing:border-box;display:flex;flex-direction:column;width:min(760px,100%);max-height:min(82vh,760px);min-height:0;overflow:hidden;border:1px solid var(--dsw-alias-border-l1);border-radius:12px;background:var(--dsw-alias-bg-overlay);box-shadow:var(--dsw-elevation-prominent);color:var(--dsw-alias-label-primary);font-size:12.5px;line-height:1.45}' +
+      '.hrc-panel:focus{outline:none}' +
+      '.hrc-head{display:flex;align-items:flex-start;gap:10px;flex:none;padding:12px 14px;border-bottom:1px solid var(--dsw-alias-border-l1)}' +
+      '.hrc-head-text{display:flex;flex-direction:column;gap:2px;flex:1 1 auto;min-width:0}' +
+      '.hrc-title{font-size:13.5px;font-weight:600;color:var(--dsw-alias-label-primary)}' +
+      '.hrc-desc{font-size:11.5px;color:var(--dsw-alias-label-secondary)}' +
+      '.hrc-body{flex:1 1 auto;min-height:0;overflow-y:auto;display:flex;flex-direction:column;gap:10px;padding:12px 14px}' +
+      '.hrc-field{display:flex;flex-direction:column;gap:4px;min-width:0}' +
+      '.hrc-label{display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:11.5px;color:var(--dsw-alias-label-secondary)}' +
+      '.hrc-hint{font-size:11px;color:var(--dsw-alias-label-secondary)}' +
+      '.hrc-count{font-size:11px;color:var(--dsw-alias-label-secondary);font-variant-numeric:tabular-nums}' +
+      '.hrc-preview,.hrc-textarea{width:100%;min-width:0;box-sizing:border-box;padding:8px 10px;border:1px solid var(--dsw-alias-border-l1);border-radius:8px;background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-primary);font-family:inherit;font-size:12.5px;line-height:1.45}' +
+      '.hrc-preview{min-height:200px;max-height:38vh;resize:vertical;overflow:auto;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11px;white-space:pre-wrap;word-break:break-word}' +
+      '.hrc-textarea{min-height:64px;max-height:160px;resize:vertical}' +
+      '.hrc-select{width:100%;height:30px;box-sizing:border-box;padding:0 8px;border:1px solid var(--dsw-alias-border-l1);border-radius:8px;background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-primary);font-family:inherit;font-size:12.5px;cursor:pointer}' +
+      '.hrc-route{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;align-items:start}' +
+      '@media (max-width:640px){.hrc-route{grid-template-columns:minmax(0,1fr)}}' +
+      '.hrc-select:disabled,.hrc-textarea:disabled,.hrc-preview:disabled{opacity:.6;cursor:default}' +
+      '.hrc-preview:focus,.hrc-textarea:focus,.hrc-select:focus{outline:none;border-color:var(--dsw-alias-label-secondary)}' +
+      '.hrc-msg{font-size:11.5px;overflow-wrap:anywhere}' +
+      '.hrc-msg.hrc-error{color:var(--dsw-alias-state-error-primary)}' +
+      '.hrc-msg.hrc-warning{color:var(--dsw-alias-state-warn-primary)}' +
+      '.hrc-warnings{display:flex;flex-direction:column;gap:2px;margin:0;padding:0;list-style:none}' +
+      '.hrc-loading{display:flex;align-items:center;gap:6px;color:var(--dsw-alias-label-secondary);font-size:12px}' +
+      '.hrc-empty{color:var(--dsw-alias-label-secondary);font-size:11.5px}' +
+      '.hrc-foot{display:flex;align-items:center;justify-content:flex-end;gap:8px;flex:none;padding:10px 14px;border-top:1px solid var(--dsw-alias-border-l1)}' +
+      '.hrc-spacer{flex:1 1 auto}'
 
     // The locale service consumes flat dotted-key dictionaries. locale/*.json keeps the
     // same translations nested (the plugin manager reads `meta` from there); the
@@ -221,6 +266,8 @@ window.__ModuleLoader__.load({
       "dock.linkSelect": "Select handoff review",
       "dock.panelUnavailable": "Right sidebar is not available.",
       "dock.openFailed": "Could not open the session.",
+      "dock.continue": "Handoff",
+      "dock.continueAria": "Hand off this session to a new continuation session",
       "status.creating": "Creating",
       "status.open": "Open",
       "status.reviewing": "Reviewing",
@@ -301,6 +348,34 @@ window.__ModuleLoader__.load({
       "drawer.close": "Close",
       "drawer.fileCount": "{count} files",
       "drawer.truncated": "… diff truncated",
+      "dialog.title": "Handoff to a new session",
+      "dialog.description": "The prompt below becomes the first message in a new session in this project.",
+      "dialog.loading": "Preparing the handoff…",
+      "dialog.previewLabel": "Handoff prompt (read-only)",
+      "dialog.previewHint": "This is the exact text the new session receives, including your supplement.",
+      "dialog.chars": "{count} characters",
+      "dialog.providerLabel": "Provider",
+      "dialog.providerSameAsSource": "(Same as source)",
+      "dialog.modelLabel": "Model",
+      "dialog.modelSource": "(Source model)",
+      "dialog.effortLabel": "Thinking effort",
+      "dialog.effortDefault": "(Model default)",
+      "dialog.effortUnavailable": "This model reports no thinking-effort levels; the model default is used.",
+      "dialog.catalogUnavailable": "The model catalog is unavailable, so no model choice is offered.",
+      "dialog.providersUnavailable": "Some providers could not be listed: {names}",
+      "dialog.supplementLabel": "Supplement (optional)",
+      "dialog.supplementPlaceholder": "Anything the new session should know that the handoff prompt does not cover",
+      "dialog.cancel": "Cancel",
+      "dialog.confirm": "Start continuation",
+      "dialog.confirming": "Creating session…",
+      "dialog.error": "Handoff failed: {message}",
+      "dialog.retry": "Retry",
+      "dialog.summaryFallback": "The model summary was unavailable, so a basic fallback summary was used.",
+      "dialog.openFailed": "The new session could not be opened.",
+      "dialog.noSession": "Open the source session before handing it off.",
+      "dialog.created": "Session {id} is ready",
+      "dialog.warningsTitle": "The session was created, but the Host reported warnings:",
+      "dialog.openCreated": "Open session",
     }
 
     /** Traditional Chinese dictionary (the user's locale). */
@@ -336,6 +411,8 @@ window.__ModuleLoader__.load({
       "dock.linkSelect": "選擇交接審查",
       "dock.panelUnavailable": "右側欄無法使用。",
       "dock.openFailed": "無法開啟 session。",
+      "dock.continue": "交接",
+      "dock.continueAria": "把目前 session 交接給新的續作 session",
       "status.creating": "建立中",
       "status.open": "已開啟",
       "status.reviewing": "審查中",
@@ -416,6 +493,34 @@ window.__ModuleLoader__.load({
       "drawer.close": "關閉",
       "drawer.fileCount": "{count} 個檔案",
       "drawer.truncated": "… 差異已截斷",
+      "dialog.title": "交接至新 session",
+      "dialog.description": "以下內容會成為新 session 的第一則訊息，在此專案中接手目前的工作。",
+      "dialog.loading": "正在整理交接內容…",
+      "dialog.previewLabel": "交接內容（唯讀）",
+      "dialog.previewHint": "這是新 session 會收到的完整文字，已包含你的補充說明。",
+      "dialog.chars": "{count} 字元",
+      "dialog.providerLabel": "提供者",
+      "dialog.providerSameAsSource": "（與來源相同）",
+      "dialog.modelLabel": "模型",
+      "dialog.modelSource": "（來源模型）",
+      "dialog.effortLabel": "思考強度",
+      "dialog.effortDefault": "（模型預設）",
+      "dialog.effortUnavailable": "此模型未提供思考強度選項，將使用模型預設。",
+      "dialog.catalogUnavailable": "模型目錄不可用，目前無法選擇模型。",
+      "dialog.providersUnavailable": "部分提供者無法列出：{names}",
+      "dialog.supplementLabel": "補充說明（選填）",
+      "dialog.supplementPlaceholder": "新 session 需要知道、但交接內容未涵蓋的事項",
+      "dialog.cancel": "取消",
+      "dialog.confirm": "開始續作",
+      "dialog.confirming": "建立中…",
+      "dialog.error": "交接失敗：{message}",
+      "dialog.retry": "重試",
+      "dialog.summaryFallback": "無法取得模型摘要，已改用基本整理。",
+      "dialog.openFailed": "新 session 已建立，但無法開啟。",
+      "dialog.noSession": "請先開啟要交接的 session。",
+      "dialog.created": "新 session {id} 已就緒",
+      "dialog.warningsTitle": "新 session 已建立，但 Host 回報以下警告：",
+      "dialog.openCreated": "開啟 session",
     }
 
     /**
@@ -519,11 +624,13 @@ window.__ModuleLoader__.load({
      * @param {string} url Request path.
      * @param {RequestInit} options Fetch options (method/headers/body).
      * @param {(key: string, params?: Record<string, unknown>) => string} t translate
+     * @param {number} [timeoutMs] Optional per-call bound, defaulting to REQUEST_TIMEOUT_MS.
      * @returns {Promise<object>} Parsed JSON body.
      */
-    const requestJson = async (url, options, t) => {
+    const requestJson = async (url, options, t, timeoutMs) => {
+      const bound = Number.isFinite(timeoutMs) && timeoutMs > 0 ? timeoutMs : REQUEST_TIMEOUT_MS
       const controller = new AbortController()
-      const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS)
+      const timer = setTimeout(() => controller.abort(), bound)
       try {
         const response = await fetch(url, {
           credentials: 'same-origin',
@@ -574,6 +681,9 @@ window.__ModuleLoader__.load({
     const stateUrl = (sessionId, linkId) => routeUrl('/handoff-review/api/state', { sessionId, linkId })
     const panelUrl = (sessionId, linkId) => routeUrl('/handoff-review/api/panel', { sessionId, linkId })
     const diffUrl = (sessionId, linkId) => routeUrl('/handoff-review/api/diff', { sessionId, linkId })
+    /** Continuation routes take their whole input as a POST JSON body, not a query. */
+    const continuationPreviewUrl = () => CONTINUATION_PREVIEW_PATH
+    const continuationStartUrl = () => CONTINUATION_START_PATH
 
     /**
      * One small inline spinner (text-equivalent busy affordance).
@@ -852,6 +962,352 @@ window.__ModuleLoader__.load({
       patchDrawer(sessionId, { open: false })
     }
 
+    /** @type {Map<string, {open: boolean}>} Per-session continuation-dialog state. */
+    const continuationStates = new Map()
+    /** @type {Set<Function>} Continuation-dialog state subscriptions. */
+    const continuationListeners = new Set()
+
+    /**
+     * Read one session's continuation-dialog state.
+     * @param {string|undefined} sessionId Session id.
+     * @returns {{open: boolean}} dialog state
+     */
+    const continuationOf = (sessionId) => {
+      const state = sessionId ? continuationStates.get(sessionId) : undefined
+      return state || { open: false }
+    }
+
+    /**
+     * Subscribe to continuation-dialog state changes.
+     * @param {Function} listener Change callback.
+     * @returns {Function} unsubscribe
+     */
+    const subscribeContinuation = (listener) => {
+      continuationListeners.add(listener)
+      return () => { continuationListeners.delete(listener) }
+    }
+
+    /**
+     * Patch one session's continuation-dialog state and notify subscribers.
+     * @param {string} sessionId Session id.
+     * @param {object} patch Partial dialog state.
+     * @returns {void}
+     */
+    const patchContinuation = (sessionId, patch) => {
+      if (!sessionId) return
+      if (!continuationStates.has(sessionId) && continuationStates.size >= 64) {
+        const oldest = continuationStates.keys().next().value
+        if (oldest !== undefined) continuationStates.delete(oldest)
+      }
+      const next = { ...continuationOf(sessionId), ...patch }
+      continuationStates.set(sessionId, next)
+      for (const listener of [...continuationListeners]) {
+        try { listener(next) } catch (error) { console.error('handoff-review: continuation listener failed', error) }
+      }
+    }
+
+    /**
+     * Open the continuation dialog for one session.
+     * @param {string} sessionId Session id.
+     * @returns {void}
+     */
+    const openContinuation = (sessionId) => {
+      patchContinuation(sessionId, { open: true })
+    }
+
+    /**
+     * Close the continuation dialog for one session.
+     * @param {string} sessionId Session id.
+     * @returns {void}
+     */
+    const closeContinuation = (sessionId) => {
+      patchContinuation(sessionId, { open: false })
+    }
+
+    /**
+     * Trim one wire value to a non-empty string for the model picker.
+     * @param {unknown} value Raw value.
+     * @returns {string} Trimmed string, or ''.
+     */
+    const continuationText = (value) => (typeof value === 'string' ? value.trim() : '')
+
+    /**
+     * Normalize the preview's provider-grouped catalog for the dialog: only
+     * provider/model identity plus reasoning-effort metadata, malformed entries
+     * dropped. Mirrors the Host's `sanitizeContinuationCatalog`.
+     * @param {unknown} catalog Wire catalog (`{ groups, failures }`).
+     * @returns {{ groups: Array<{ id: string, name: string, models: Array<{ id: string, name: string, efforts: Array<{ id: string, name: string }>, defaultEffort: string }> }>, failures: Array<{ id: string, name: string }> }} normalized catalog
+     */
+    const normalizeContinuationCatalog = (catalog) => {
+      const source = catalog !== null && typeof catalog === 'object' ? catalog : {}
+      const groups = []
+      for (const group of Array.isArray(source.groups) ? source.groups : []) {
+        if (group === null || typeof group !== 'object') continue
+        const groupId = continuationText(group.id)
+        if (groupId === '') continue
+        const models = []
+        for (const model of Array.isArray(group.models) ? group.models : []) {
+          if (model === null || typeof model !== 'object') continue
+          const modelId = continuationText(model.id)
+          if (modelId === '') continue
+          const efforts = []
+          for (const effort of Array.isArray(model.reasoningEfforts) ? model.reasoningEfforts : []) {
+            if (effort === null || typeof effort !== 'object') continue
+            const effortId = continuationText(effort.id)
+            if (effortId === '') continue
+            efforts.push({ id: effortId, name: continuationText(effort.name) || effortId })
+          }
+          models.push({
+            id: modelId,
+            name: continuationText(model.name) || modelId,
+            efforts,
+            defaultEffort: continuationText(model.defaultReasoningEffort),
+          })
+        }
+        if (models.length === 0) continue
+        groups.push({ id: groupId, name: continuationText(group.name) || groupId, models })
+      }
+      const failures = []
+      for (const failure of Array.isArray(source.failures) ? source.failures : []) {
+        if (failure === null || typeof failure !== 'object') continue
+        const failureId = continuationText(failure.id)
+        if (failureId === '') continue
+        failures.push({ id: failureId, name: continuationText(failure.name) || failureId })
+      }
+      return { groups, failures }
+    }
+
+    /**
+     * Find one provider group in a normalized continuation catalog.
+     * @param {{ groups: Array<object> }} catalog Normalized catalog.
+     * @param {string} provider Provider id.
+     * @returns {object|undefined} Matching group.
+     */
+    const continuationCatalogGroup = (catalog, provider) =>
+      catalog.groups.find((group) => group.id === provider)
+
+    /**
+     * Find one model entry in a normalized continuation catalog.
+     * @param {{ groups: Array<object> }} catalog Normalized catalog.
+     * @param {string} provider Provider id.
+     * @param {string} model Model id.
+     * @returns {object|undefined} Matching model entry.
+     */
+    const findContinuationCatalogModel = (catalog, provider, model) => {
+      const group = continuationCatalogGroup(catalog, provider)
+      if (group === undefined) return undefined
+      return group.models.find((entry) => entry.id === model)
+    }
+
+    /**
+     * Whether a preview payload carries a catalog field at all. Only a legacy
+     * payload without one may fall back to the flat `efforts` list; a current
+     * Host always sends `catalog` (possibly with empty groups), and there the
+     * flat list is empty too.
+     * @param {object|null} preview Preview payload.
+     * @returns {boolean} true when `catalog.groups` is an array.
+     */
+    const hasContinuationCatalog = (preview) => {
+      const payload = preview !== null && typeof preview === 'object' ? preview : {}
+      return payload.catalog !== null && typeof payload.catalog === 'object'
+        && Array.isArray(payload.catalog.groups)
+    }
+
+    /**
+     * Effort metadata for one provider/model choice. When the payload predates the
+     * grouped catalog (an older Host that only sent `efforts`), the preview's flat
+     * effort fields stand in so the selector still works.
+     * @param {{ groups: Array<object> }} catalog Normalized catalog.
+     * @param {object|null} preview Preview payload.
+     * @param {string} provider Provider id.
+     * @param {string} model Model id.
+     * @returns {{ efforts: Array<{ id: string, name: string }>, defaultEffort: string }|undefined} effort metadata
+     */
+    const continuationEffortEntry = (catalog, preview, provider, model) => {
+      const matched = findContinuationCatalogModel(catalog, provider, model)
+      if (matched !== undefined) return matched
+      const payload = preview !== null && typeof preview === 'object' ? preview : {}
+      const route = payload.route !== null && typeof payload.route === 'object' ? payload.route : {}
+      if (!hasContinuationCatalog(payload) && continuationText(route.provider) === provider
+        && continuationText(route.model) === model) {
+        const efforts = []
+        for (const effort of Array.isArray(payload.efforts) ? payload.efforts : []) {
+          if (effort === null || typeof effort !== 'object') continue
+          const effortId = continuationText(effort.id)
+          if (effortId === '') continue
+          efforts.push({ id: effortId, name: continuationText(effort.name) || effortId })
+        }
+        return { id: model, name: model, efforts, defaultEffort: continuationText(payload.defaultReasoningEffort) }
+      }
+      return undefined
+    }
+
+    /**
+     * The advertised default effort id for one provider/model choice, or ''.
+     * @param {{ groups: Array<object> }} catalog Normalized catalog.
+     * @param {object|null} preview Preview payload.
+     * @param {string} provider Provider id.
+     * @param {string} model Model id.
+     * @returns {string} Default effort id ('' when none is advertised).
+     */
+    const continuationDefaultEffort = (catalog, preview, provider, model) => {
+      const entry = continuationEffortEntry(catalog, preview, provider, model)
+      if (entry === undefined) return ''
+      return entry.efforts.some((effort) => effort.id === entry.defaultEffort) ? entry.defaultEffort : ''
+    }
+
+    /**
+     * Initial provider/model/effort selection for a fresh preview: the source
+     * route, its current effort, and the first advertised default as fallback.
+     * An incomplete source route (only one half set) is treated as "same as
+     * source": the picker starts on the no-override option so the select value
+     * always matches a rendered option and the start payload stays consistent.
+     * @param {object|null} preview Preview payload.
+     * @returns {{ provider: string, model: string, effort: string }} selection
+     */
+    const initialContinuationSelection = (preview) => {
+      const payload = preview !== null && typeof preview === 'object' ? preview : {}
+      const route = payload.route !== null && typeof payload.route === 'object' ? payload.route : {}
+      const provider = continuationText(route.provider)
+      const model = continuationText(route.model)
+      if (provider === '' || model === '') return { provider: '', model: '', effort: '' }
+      const catalog = normalizeContinuationCatalog(payload.catalog)
+      const entry = continuationEffortEntry(catalog, payload, provider, model)
+      let effort = ''
+      if (entry !== undefined && entry.efforts.length > 0) {
+        const current = continuationText(payload.currentReasoningEffort)
+          || continuationText(payload.defaultReasoningEffort)
+        if (current !== '' && entry.efforts.some((candidate) => candidate.id === current)) effort = current
+        else if (entry.efforts.some((candidate) => candidate.id === entry.defaultEffort)) effort = entry.defaultEffort
+      }
+      return { provider, model, effort }
+    }
+
+    /**
+     * Derive the provider/model/effort control view-model for the dialog.
+     * @param {object|null} preview Preview payload.
+     * @param {{ provider: string, model: string, effort: string }} current Current selection.
+     * @param {(key: string) => string} t Translate.
+     * @returns {{ catalog: object, catalogAvailable: boolean, failures: Array<{ id: string, name: string }>, provider: object, model: object, effort: object }} controls
+     */
+    const continuationRouteControls = (preview, current, t) => {
+      const catalog = normalizeContinuationCatalog(preview !== null && typeof preview === 'object' ? preview.catalog : undefined)
+      const provider = continuationText(current && current.provider)
+      const model = continuationText(current && current.model)
+      const effort = continuationText(current && current.effort)
+      const catalogAvailable = catalog.groups.length > 0
+      const providerOptions = [{ value: '', label: t('dialog.providerSameAsSource') }]
+      for (const group of catalog.groups) providerOptions.push({ value: group.id, label: group.name })
+      // A retained source provider stays selectable even when the catalog does
+      // not list it (provider lookup failed or the route was configured locally).
+      if (provider !== '' && !providerOptions.some((entry) => entry.value === provider)) {
+        providerOptions.push({ value: provider, label: provider })
+      }
+      const group = continuationCatalogGroup(catalog, provider)
+      let modelOptions
+      if (provider === '') {
+        modelOptions = [{ value: '', label: t('dialog.modelSource') }]
+      } else if (group !== undefined) {
+        modelOptions = group.models.map((entry) => ({ value: entry.id, label: entry.name }))
+        // A retained model (or the empty no-override value) stays selectable so
+        // the select's value always matches one of its options.
+        if (!modelOptions.some((entry) => entry.value === model)) {
+          modelOptions.push({ value: model, label: model !== '' ? model : t('dialog.modelSource') })
+        }
+      } else {
+        modelOptions = [{ value: model, label: model !== '' ? model : t('dialog.modelSource') }]
+      }
+      const effortEntry = continuationEffortEntry(catalog, preview, provider, model)
+      const efforts = effortEntry !== undefined ? effortEntry.efforts : []
+      const effortOptions = [{ value: '', label: t('dialog.effortDefault') }]
+      for (const entry of efforts) effortOptions.push({ value: entry.id, label: entry.name })
+      if (effort !== '' && !effortOptions.some((entry) => entry.value === effort)) {
+        effortOptions.push({ value: effort, label: effort })
+      }
+      return {
+        catalog,
+        catalogAvailable,
+        failures: catalog.failures,
+        provider: { value: provider, options: providerOptions, disabled: !catalogAvailable },
+        model: { value: model, options: modelOptions, disabled: provider === '' || group === undefined },
+        effort: {
+          value: effort,
+          options: effortOptions,
+          disabled: efforts.length === 0,
+          showUnavailableHint: efforts.length === 0,
+        },
+      }
+    }
+
+    /**
+     * Next selection after one provider/model change: switching provider picks
+     * that provider's source model (or its first model), then the model default
+     * effort; switching model keeps the provider and re-derives the effort.
+     * @param {object|null} preview Preview payload.
+     * @param {{ provider: string, model: string, effort: string }} current Current selection.
+     * @param {{ provider?: string, model?: string }} patch Changed control.
+     * @returns {{ provider: string, model: string, effort: string }} next selection
+     */
+    const nextContinuationRouteSelection = (preview, current, patch) => {
+      const payload = preview !== null && typeof preview === 'object' ? preview : {}
+      const route = payload.route !== null && typeof payload.route === 'object' ? payload.route : {}
+      const catalog = normalizeContinuationCatalog(payload.catalog)
+      const previous = {
+        provider: continuationText(current && current.provider),
+        model: continuationText(current && current.model),
+        effort: continuationText(current && current.effort),
+      }
+      const next = { ...previous }
+      if (patch !== null && typeof patch === 'object' && Object.prototype.hasOwnProperty.call(patch, 'provider')) {
+        next.provider = continuationText(patch.provider)
+        if (next.provider === '') {
+          next.model = ''
+          next.effort = ''
+          return next
+        }
+        const group = continuationCatalogGroup(catalog, next.provider)
+        if (group !== undefined) {
+          const preferred = group.models.some((entry) => entry.id === previous.model)
+            ? previous.model
+            : (group.models[0] !== undefined ? group.models[0].id : '')
+          next.model = preferred
+        } else {
+          next.model = next.provider === continuationText(route.provider)
+            ? continuationText(route.model)
+            : ''
+        }
+        next.effort = continuationDefaultEffort(catalog, payload, next.provider, next.model)
+        return next
+      }
+      if (patch !== null && typeof patch === 'object' && Object.prototype.hasOwnProperty.call(patch, 'model')) {
+        next.model = continuationText(patch.model)
+        next.effort = continuationDefaultEffort(catalog, payload, next.provider, next.model)
+      }
+      return next
+    }
+
+    /**
+     * Build the continuation start request body from the dialog's selection.
+     * The provider/model pair is only sent together, and only when both are set.
+     * @param {{ sessionId: string, draftId: string, provider?: string, model?: string, effort?: string, supplement?: string }} input Selection and request identity.
+     * @returns {object} JSON request body.
+     */
+    const buildContinuationStartPayload = (input) => {
+      const source = input !== null && typeof input === 'object' ? input : {}
+      const payload = { sessionId: source.sessionId, draftId: source.draftId }
+      const provider = continuationText(source.provider)
+      const model = continuationText(source.model)
+      if (provider !== '' && model !== '') {
+        payload.provider = provider
+        payload.model = model
+      }
+      const effort = continuationText(source.effort)
+      if (effort !== '') payload.reasoningEffort = effort
+      const supplement = continuationText(source.supplement)
+      if (supplement !== '') payload.supplement = supplement
+      return payload
+    }
+
     /**
      * Copy text to the clipboard when the browser allows it.
      * @param {string} text Text to copy.
@@ -877,12 +1333,15 @@ window.__ModuleLoader__.load({
      * @param {Function} onNotice Notice setter.
      * @param {Function} onError Error setter.
      * @param {string} [missingKey] Locale key used when the id is empty.
-     * @returns {Promise<void>}
+     * @returns {Promise<{opened: boolean, copied: boolean}>} whether the workspace
+     *   opened the session, and whether the id was copied to the clipboard instead.
+     *   Existing callers ignore this result; the continuation dialog uses it to keep
+     *   its modal open when navigation fails.
      */
     const openSessionWithFallback = async (runtime, targetId, t, onNotice, onError, missingKey) => {
       if (typeof targetId !== 'string' || targetId === '') {
         if (typeof onError === 'function') onError({ message: t(missingKey || 'dock.sessionMissing') })
-        return
+        return { opened: false, copied: false }
       }
       let opened = false
       if (runtime && typeof runtime.openSession === 'function') {
@@ -894,7 +1353,7 @@ window.__ModuleLoader__.load({
       }
       if (opened) {
         if (typeof onError === 'function') onError(null)
-        return
+        return { opened: true, copied: false }
       }
       const copied = await copyText(targetId)
       if (typeof onError === 'function') onError(null)
@@ -907,6 +1366,7 @@ window.__ModuleLoader__.load({
           tone: copied ? 'success' : 'info',
         })
       }
+      return { opened: false, copied }
     }
 
     /**
@@ -2510,6 +2970,549 @@ window.__ModuleLoader__.load({
         buttonElement({ key: 'closeFoot', label: tr('drawer.close'), onClick: () => { closeDiffDrawer(sessionId) } })))
     }
 
+    /**
+     * Composer-dock continuation entry (M3): one compact right-aligned 交接/Handoff
+     * button that opens the continuation dialog. It has no polling and performs no
+     * fetch; the open flag lives in the module-scope continuation store so the
+     * separate overlay registration sees it.
+     * @param {object} props Slot props plus the plugin runtime surface.
+     * @returns {object|null} React element or null.
+     */
+    function HandoffContinuationRow(props) {
+      const sessionId = props.sessionId || (props.session && props.session.id) || undefined
+      const runtime = props.runtime || {}
+      const t = typeof props.t === 'function'
+        ? props.t
+        : (typeof runtime.t === 'function' ? runtime.t : fallbackT)
+      useLocaleTick(runtime.subscribeLocale)
+
+      if (!sessionId) return null
+
+      return React.createElement('div', {
+        className: 'hrc-row',
+        role: 'group',
+        'aria-label': t('dock.continueAria'),
+      }, buttonElement({
+        key: 'continue',
+        label: t('dock.continue'),
+        onClick: () => { openContinuation(sessionId) },
+        title: t('dock.continueAria'),
+      }))
+    }
+
+    /**
+     * Continuation handoff dialog (M3): previews the exact prompt that will start a
+     * new session, lets the user choose that session's provider, model and thinking
+     * effort and append a supplement, then asks the Host to create+start the
+     * continuation session and navigates to it. Every failure stays inline;
+     * Escape/backdrop dismiss only while no start request is in flight.
+     * @param {object} props Slot props plus the plugin runtime surface.
+     * @returns {object|null} React element or null.
+     */
+    function HandoffContinuationDialog(props) {
+      const sessionId = props.sessionId || (props.session && props.session.id) || undefined
+      const runtime = props.runtime || {}
+      const t = typeof props.t === 'function'
+        ? props.t
+        : (typeof runtime.t === 'function' ? runtime.t : fallbackT)
+      useLocaleTick(runtime.subscribeLocale)
+
+      const [dialog, setDialog] = React.useState(() => continuationOf(sessionId))
+      const [preview, setPreview] = React.useState(null)
+      const [previewError, setPreviewError] = React.useState(null)
+      const [loading, setLoading] = React.useState(false)
+      const [provider, setProvider] = React.useState('')
+      const [model, setModel] = React.useState('')
+      const [effort, setEffort] = React.useState('')
+      const [supplement, setSupplement] = React.useState('')
+      const [submitting, setSubmitting] = React.useState(false)
+      const [submitError, setSubmitError] = React.useState(null)
+      const [navFailure, setNavFailure] = React.useState(null)
+      const [startedSession, setStartedSession] = React.useState(null)
+      const [failedSession, setFailedSession] = React.useState(null)
+      const mountedRef = React.useRef(true)
+      const submittingRef = React.useRef(false)
+      const cardRef = React.useRef(null)
+      const returnFocusRef = React.useRef(null)
+
+      const open = dialog.open === true
+
+      React.useEffect(() => {
+        mountedRef.current = true
+        return () => {
+          mountedRef.current = false
+          submittingRef.current = false
+        }
+      }, [])
+
+      React.useEffect(() => {
+        setDialog(continuationOf(sessionId))
+        return subscribeContinuation(() => {
+          if (mountedRef.current) setDialog(continuationOf(sessionId))
+        })
+      }, [sessionId])
+
+      /**
+       * Fetch one fresh preview. The Host reads the live source session and may run
+       * one summarization call, so this request owns the longer preview timeout.
+       * @returns {Promise<void>}
+       */
+      const loadPreview = React.useCallback(async () => {
+        if (!sessionId) return
+        setLoading(true)
+        setPreviewError(null)
+        setSubmitError(null)
+        setNavFailure(null)
+        setStartedSession(null)
+        setFailedSession(null)
+        try {
+          const body = await requestJson(continuationPreviewUrl(), {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ sessionId }),
+          }, t, CONTINUATION_PREVIEW_TIMEOUT_MS)
+          if (!mountedRef.current) return
+          if (!body || body.ok !== true) {
+            setPreview(null)
+            setPreviewError({ message: messageOf(body || {}, t), code: body && body.code })
+            return
+          }
+          // The source route is the default selection; the catalog in the same
+          // payload feeds the provider/model choices and their effort lists.
+          const selection = initialContinuationSelection(body)
+          setPreview(body)
+          setProvider(selection.provider)
+          setModel(selection.model)
+          setEffort(selection.effort)
+        } catch (error) {
+          if (!mountedRef.current) return
+          setPreview(null)
+          setPreviewError({ message: (error && error.message) || t('dock.networkError'), code: error && error.code })
+        } finally {
+          if (mountedRef.current) setLoading(false)
+        }
+      }, [sessionId, t])
+
+      // A fresh open always reloads the preview; a close drops every transient value so
+      // a later open cannot show a stale prompt or an earlier attempt's error.
+      React.useEffect(() => {
+        if (!open) {
+          setPreview(null)
+          setPreviewError(null)
+          setLoading(false)
+          setSubmitting(false)
+          submittingRef.current = false
+          setSubmitError(null)
+          setNavFailure(null)
+          setStartedSession(null)
+          setFailedSession(null)
+          setProvider('')
+          setModel('')
+          setEffort('')
+          setSupplement('')
+          return undefined
+        }
+        loadPreview()
+        return undefined
+      }, [open, loadPreview])
+
+      // Escape dismisses only while idle. The surface carries role=dialog/aria-modal so
+      // the shipped shortcut system already treats it as a modal (Escape sequences etc.).
+      React.useEffect(() => {
+        if (!open || !sessionId) return undefined
+        const onKey = (event) => {
+          if (event.key !== 'Escape' || event.defaultPrevented) return
+          if (submittingRef.current) return
+          event.preventDefault()
+          closeContinuation(sessionId)
+        }
+        window.addEventListener('keydown', onKey)
+        return () => window.removeEventListener('keydown', onKey)
+      }, [open, sessionId])
+
+      // Focus the card while open and restore the previously focused control on close.
+      React.useEffect(() => {
+        if (!open) return undefined
+        returnFocusRef.current = typeof document !== 'undefined' ? document.activeElement : null
+        const timer = setTimeout(() => {
+          if (cardRef.current && typeof cardRef.current.focus === 'function') cardRef.current.focus()
+        }, 0)
+        return () => {
+          clearTimeout(timer)
+          const previous = returnFocusRef.current
+          if (previous && previous.isConnected && typeof previous.focus === 'function') {
+            try { previous.focus() } catch (error) { /* the opener may be gone */ }
+          }
+        }
+      }, [open])
+
+      if (!open || !sessionId) return null
+
+      /** Dismiss the dialog unless a start request is already in flight. */
+      const close = () => {
+        if (submittingRef.current) return
+        closeContinuation(sessionId)
+      }
+
+      /** Backdrop dismissal ignores clicks that originate inside the card. */
+      const onBackdrop = (event) => {
+        if (event.target !== event.currentTarget) return
+        close()
+      }
+
+      const promptText = preview && typeof preview.prompt === 'string' ? preview.prompt : ''
+      // The dialog only shows the form when the exact prompt is present; a payload
+      // without it keeps the busy state and cannot be confirmed (the Host draft
+      // still has its own prompt, but the user must not start unseen text).
+      const previewReady = preview !== null && typeof preview === 'object'
+        && typeof preview.prompt === 'string' && preview.prompt !== ''
+      const trimmedSupplement = supplement.trim()
+      const previewText = trimmedSupplement === ''
+        ? promptText
+        : promptText + SUPPLEMENT_BLOCK_HEADING + trimmedSupplement
+      const charCount = previewText.length
+
+      const routeControls = continuationRouteControls(preview, { provider, model, effort }, t)
+      // Provider/model changes re-derive the effort from the chosen model's
+      // advertised default; keeping the previous model's effort id would send a
+      // level the new model never reported.
+      const onProviderChange = (value) => {
+        const next = nextContinuationRouteSelection(preview, { provider, model, effort }, { provider: value })
+        setProvider(next.provider)
+        setModel(next.model)
+        setEffort(next.effort)
+      }
+      const onModelChange = (value) => {
+        const next = nextContinuationRouteSelection(preview, { provider, model, effort }, { model: value })
+        setModel(next.model)
+        setEffort(next.effort)
+      }
+
+      const warnings = []
+      if (preview && preview.summarySource === 'deterministic') warnings.push(t('dialog.summaryFallback'))
+      if (preview && Array.isArray(preview.warnings)) {
+        for (const warning of preview.warnings) {
+          if (typeof warning === 'string' && warning && !warnings.includes(warning)) warnings.push(warning)
+        }
+      }
+
+      /**
+       * Confirm: ask the Host to consume the draft and start the continuation session,
+       * then navigate to it. When the shell cannot open the session the dialog stays
+       * open and reports the created session id (clipboard outcome included) instead of
+       * vanishing silently; only a successful navigation closes it.
+       * @returns {Promise<void>}
+       */
+      const confirm = async () => {
+        if (submittingRef.current || navFailure !== null || startedSession !== null || failedSession !== null) return
+        if (!previewReady || typeof preview.draftId !== 'string' || !preview.draftId) return
+        submittingRef.current = true
+        setSubmitting(true)
+        setSubmitError(null)
+        setNavFailure(null)
+        let started = null
+        let failure = null
+        try {
+          const payload = buildContinuationStartPayload({
+            sessionId,
+            draftId: preview.draftId,
+            provider,
+            model,
+            effort,
+            supplement: trimmedSupplement,
+          })
+          const body = await requestJson(continuationStartUrl(), {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify(payload),
+          }, t, CONTINUATION_START_TIMEOUT_MS)
+          if (!body || body.ok !== true) {
+            failure = {
+              message: messageOf(body || {}, t),
+              code: body && body.code,
+              sessionId: body && typeof body.sessionId === 'string' && body.sessionId !== ''
+                ? body.sessionId
+                : undefined,
+            }
+          } else {
+            started = body
+          }
+        } catch (error) {
+          failure = { message: (error && error.message) || t('dock.networkError'), code: error && error.code }
+        }
+
+        submittingRef.current = false
+        if (!mountedRef.current) return
+        setSubmitting(false)
+        if (failure) {
+          if (typeof failure.sessionId === 'string' && failure.sessionId !== '') {
+            // The session exists and the one-shot draft is spent: Retry would
+            // re-preview and could create a second session, so offer the created
+            // session instead.
+            setFailedSession({ sessionId: failure.sessionId, message: failure.message })
+          } else {
+            setSubmitError(failure)
+          }
+          return
+        }
+        const createdId = started && typeof started.sessionId === 'string' ? started.sessionId : ''
+        if (!createdId) {
+          setSubmitError({ message: t('dialog.openFailed') })
+          return
+        }
+        const startedWarnings = started && Array.isArray(started.warnings)
+          ? started.warnings.filter((warning) => typeof warning === 'string' && warning !== '')
+          : []
+        if (startedWarnings.length > 0) {
+          // The Host may have fallen back to the deployment default route/effort.
+          // Keep the modal open so those warnings are read before navigating.
+          setStartedSession({ sessionId: createdId, warnings: startedWarnings })
+          return
+        }
+        // The draft is consumed and the new session exists from here on: a failed
+        // navigation must surface its id rather than silently dropping the modal.
+        const navigation = await openSessionWithFallback(runtime, createdId, t, () => {}, () => {}, 'dialog.openFailed')
+        if (!mountedRef.current) return
+        if (navigation && navigation.opened) {
+          closeContinuation(sessionId)
+          return
+        }
+        setNavFailure({ sessionId: createdId, copied: !!(navigation && navigation.copied) })
+      }
+
+      /**
+       * Open a session created by a start that could not navigate automatically
+       * (warnings acknowledgement, or a post-create failure). The modal stays
+       * open (and keeps the id visible) when navigation is unavailable.
+       * @param {string} target created continuation session id
+       * @returns {Promise<void>}
+       */
+      const openCreatedTarget = async (target) => {
+        if (typeof target !== 'string' || target === '') return
+        const navigation = await openSessionWithFallback(runtime, target, t, () => {}, () => {}, 'dialog.openCreated')
+        if (!mountedRef.current) return
+        if (navigation && navigation.opened) {
+          closeContinuation(sessionId)
+          return
+        }
+        setNavFailure({ sessionId: target, copied: !!(navigation && navigation.copied) })
+      }
+
+      /** Open the session created by a start that reported warnings. */
+      const openStartedSession = () => openCreatedTarget(
+        startedSession && typeof startedSession.sessionId === 'string' ? startedSession.sessionId : '',
+      )
+
+      /** Open the session created by a start that failed after creation. */
+      const openFailedSession = () => openCreatedTarget(
+        failedSession && typeof failedSession.sessionId === 'string' ? failedSession.sessionId : '',
+      )
+
+      const tr = t
+      let bodyElement = null
+      if (loading) {
+        bodyElement = React.createElement('div', { key: 'loading', className: 'hrc-loading', role: 'status' },
+          spinnerElement(12), ' ', tr('dialog.loading'))
+      } else if (previewError) {
+        bodyElement = React.createElement('div', { key: 'previewError', className: 'hrc-field' },
+          React.createElement('span', { className: 'hrc-msg hrc-error', role: 'alert' },
+            tr('dialog.error', { message: previewError.message })),
+          React.createElement('div', { className: 'hrc-foot', style: { padding: 0, border: 'none' } },
+            buttonElement({
+              key: 'retryPreview',
+              label: tr('dialog.retry'),
+              onClick: () => { loadPreview() },
+            })))
+      } else if (previewReady) {
+        bodyElement = [
+          React.createElement('label', { key: 'preview', className: 'hrc-field' },
+            React.createElement('span', { className: 'hrc-label' },
+              React.createElement('span', null, tr('dialog.previewLabel')),
+              React.createElement('span', { className: 'hrc-count' }, tr('dialog.chars', { count: charCount }))),
+            React.createElement('textarea', {
+              className: 'hrc-preview',
+              readOnly: true,
+              spellCheck: false,
+              value: previewText,
+              'aria-label': tr('dialog.previewLabel'),
+            }),
+            React.createElement('span', { className: 'hrc-hint' }, tr('dialog.previewHint'))),
+          React.createElement('div', { key: 'route', className: 'hrc-route' },
+            React.createElement('label', { key: 'provider', className: 'hrc-field' },
+              React.createElement('span', { className: 'hrc-label' }, tr('dialog.providerLabel')),
+              React.createElement('select', {
+                className: 'hrc-select',
+                value: routeControls.provider.value,
+                disabled: submitting || startedSession !== null || failedSession !== null
+                  || routeControls.provider.disabled,
+                'aria-label': tr('dialog.providerLabel'),
+                onChange: (event) => onProviderChange(event.target.value),
+              }, routeControls.provider.options.map((entry) => React.createElement('option', {
+                key: entry.value === '' ? '__default' : entry.value,
+                value: entry.value,
+              }, entry.label)))),
+            React.createElement('label', { key: 'model', className: 'hrc-field' },
+              React.createElement('span', { className: 'hrc-label' }, tr('dialog.modelLabel')),
+              React.createElement('select', {
+                className: 'hrc-select',
+                value: routeControls.model.value,
+                disabled: submitting || startedSession !== null || failedSession !== null
+                  || routeControls.model.disabled,
+                'aria-label': tr('dialog.modelLabel'),
+                onChange: (event) => onModelChange(event.target.value),
+              }, routeControls.model.options.map((entry) => React.createElement('option', {
+                key: entry.value === '' ? '__default' : entry.value,
+                value: entry.value,
+              }, entry.label)))),
+            React.createElement('label', { key: 'effort', className: 'hrc-field' },
+              React.createElement('span', { className: 'hrc-label' }, tr('dialog.effortLabel')),
+              React.createElement('select', {
+                className: 'hrc-select',
+                value: routeControls.effort.value,
+                disabled: submitting || startedSession !== null || failedSession !== null
+                  || routeControls.effort.disabled,
+                'aria-label': tr('dialog.effortLabel'),
+                onChange: (event) => setEffort(event.target.value),
+              }, routeControls.effort.options.map((entry) => React.createElement('option', {
+                key: entry.value === '' ? '__default' : entry.value,
+                value: entry.value,
+              }, entry.label))),
+              routeControls.effort.showUnavailableHint
+                ? React.createElement('span', { className: 'hrc-hint' }, tr('dialog.effortUnavailable'))
+                : null)),
+          routeControls.catalogAvailable
+            ? null
+            : React.createElement('span', { key: 'catalogHint', className: 'hrc-hint' }, tr('dialog.catalogUnavailable')),
+          routeControls.failures.length === 0
+            ? null
+            : React.createElement('span', { key: 'failuresHint', className: 'hrc-hint' },
+              tr('dialog.providersUnavailable', {
+                names: routeControls.failures.map((failure) => failure.name).join(', '),
+              })),
+          React.createElement('label', { key: 'supplement', className: 'hrc-field' },
+            React.createElement('span', { className: 'hrc-label' },
+              React.createElement('span', null, tr('dialog.supplementLabel')),
+              React.createElement('span', { className: 'hrc-count' },
+                tr('dialog.chars', { count: supplement.length }))),
+            React.createElement('textarea', {
+              className: 'hrc-textarea',
+              value: supplement,
+              maxLength: SUPPLEMENT_LIMIT,
+              disabled: submitting || startedSession !== null || failedSession !== null,
+              placeholder: tr('dialog.supplementPlaceholder'),
+              'aria-label': tr('dialog.supplementLabel'),
+              onChange: (event) => setSupplement(event.target.value),
+            })),
+          warnings.length === 0
+            ? null
+            : React.createElement('ul', { key: 'warnings', className: 'hrc-warnings', role: 'status' },
+              warnings.map((warning, index) => React.createElement('li', {
+                key: 'warning:' + index,
+                className: 'hrc-msg hrc-warning',
+              }, '⚠ ' + warning))),
+          failedSession
+            ? React.createElement('div', { key: 'failedSession', className: 'hrc-field' },
+              React.createElement('span', { className: 'hrc-msg hrc-error', role: 'alert' },
+                tr('dialog.error', { message: failedSession.message })),
+              React.createElement('span', { className: 'hrc-msg', role: 'status' },
+                tr('dialog.created', { id: failedSession.sessionId })),
+              React.createElement('div', { className: 'hrc-foot', style: { padding: 0, border: 'none' } },
+                buttonElement({
+                  key: 'openFailedCreated',
+                  label: tr('dialog.openCreated'),
+                  onClick: () => { openFailedSession() },
+                  primary: true,
+                })))
+            : null,
+          startedSession
+            ? React.createElement('div', { key: 'startedSession', className: 'hrc-field' },
+              React.createElement('span', { className: 'hrc-msg', role: 'status' },
+                tr('dialog.created', { id: startedSession.sessionId })),
+              React.createElement('span', { className: 'hrc-label' }, tr('dialog.warningsTitle')),
+              React.createElement('ul', { className: 'hrc-warnings', role: 'status' },
+                startedSession.warnings.map((warning, index) => React.createElement('li', {
+                  key: 'started-warning:' + index,
+                  className: 'hrc-msg hrc-warning',
+                }, '⚠ ' + warning))),
+              React.createElement('div', { className: 'hrc-foot', style: { padding: 0, border: 'none' } },
+                buttonElement({
+                  key: 'openCreated',
+                  label: tr('dialog.openCreated'),
+                  onClick: () => { openStartedSession() },
+                  primary: true,
+                })))
+            : null,
+          submitError
+            ? React.createElement('div', { key: 'submitError', className: 'hrc-field' },
+              React.createElement('span', { className: 'hrc-msg hrc-error', role: 'alert' },
+                tr('dialog.error', { message: submitError.message })),
+              React.createElement('div', { className: 'hrc-foot', style: { padding: 0, border: 'none' } },
+                buttonElement({
+                  key: 'retryStart',
+                  label: tr('dialog.retry'),
+                  onClick: () => { loadPreview() },
+                  disabled: submitting,
+                })))
+            : null,
+          navFailure
+            ? React.createElement('div', { key: 'navFailure', className: 'hrc-field' },
+              React.createElement('span', { className: 'hrc-msg hrc-error', role: 'alert' },
+                tr('dialog.openFailed')),
+              React.createElement('span', { className: 'hrc-hint', role: 'status' },
+                navFailure.copied
+                  ? tr('dock.copied', { id: navFailure.sessionId })
+                  : tr('dialog.created', { id: navFailure.sessionId })))
+            : null,
+        ]
+      } else {
+        // First paint before the preview effect flips `loading`, or a Host payload
+        // without the exact prompt: show the busy affordance rather than an empty
+        // form whose Confirm would start text the user never saw.
+        bodyElement = React.createElement('div', { key: 'pending', className: 'hrc-loading', role: 'status' },
+          spinnerElement(12), ' ', tr('dialog.loading'))
+      }
+
+      return React.createElement('div', {
+        className: 'hrc-backdrop',
+        role: 'presentation',
+        onClick: onBackdrop,
+      }, React.createElement('div', {
+        ref: cardRef,
+        className: 'hrc-panel',
+        role: 'dialog',
+        'aria-modal': 'true',
+        'aria-label': tr('dialog.title'),
+        'data-shortcut-modal': true,
+        tabIndex: -1,
+      },
+      React.createElement('div', { className: 'hrc-head' },
+        React.createElement('div', { className: 'hrc-head-text' },
+          React.createElement('span', { className: 'hrc-title' }, tr('dialog.title')),
+          React.createElement('span', { className: 'hrc-desc' }, tr('dialog.description')))),
+      React.createElement('div', { className: 'hrc-body' }, bodyElement),
+      React.createElement('div', { className: 'hrc-foot' },
+        submitting
+          ? React.createElement('span', { key: 'busy', className: 'hrc-loading', role: 'status' },
+            spinnerElement(12), ' ', tr('dialog.confirming'))
+          : null,
+        React.createElement('span', { key: 'spacer', className: 'hrc-spacer' }),
+        buttonElement({
+          key: 'cancel',
+          label: tr('dialog.cancel'),
+          onClick: close,
+          disabled: submitting,
+        }),
+        buttonElement({
+          key: 'confirm',
+          label: submitting ? tr('dialog.confirming') : tr('dialog.confirm'),
+          onClick: () => { confirm() },
+          disabled: submitting || loading || !previewReady || !!previewError || navFailure !== null
+            || startedSession !== null || failedSession !== null
+            || typeof preview.draftId !== 'string' || preview.draftId === '',
+          primary: true,
+        }))))
+    }
+
     const inject = ['slots', 'locale', 'sidebarRightTabs', 'sidebarRight', 'uiWorkspace']
 
     /**
@@ -2676,6 +3679,28 @@ window.__ModuleLoader__.load({
         session: slotProps.session,
         runtime,
       }))), 'handoff-review: input dock')
+
+      ctx.effect(() => ctx.slots.inject('conversation.input.overlay', () => ctx.slots.register({
+        name: 'conversation.input.overlay',
+        id: CONTINUATION_DIALOG_ID,
+        order: CONTINUATION_DIALOG_ORDER,
+        label: () => t('dialog.title'),
+      }, (slotProps) => React.createElement(HandoffContinuationDialog, {
+        sessionId: slotProps.sessionId,
+        session: slotProps.session,
+        runtime,
+      }))), 'handoff-review: continuation dialog')
+
+      ctx.effect(() => ctx.slots.inject('conversation.input.dock', () => ctx.slots.register({
+        name: 'conversation.input.dock',
+        id: CONTINUATION_DOCK_ID,
+        order: CONTINUATION_DOCK_ORDER,
+        label: () => t('dock.continue'),
+      }, (slotProps) => React.createElement(HandoffContinuationRow, {
+        sessionId: slotProps.sessionId,
+        session: slotProps.session,
+        runtime,
+      }))), 'handoff-review: continuation dock')
     }
 
     exports.apply = apply
@@ -2694,6 +3719,21 @@ window.__ModuleLoader__.load({
     exports.PanelTitle = PanelTitle
     exports.SettingsPage = SettingsPage
     exports.DiffDrawer = DiffDrawer
+    exports.HandoffContinuationRow = HandoffContinuationRow
+    exports.HandoffContinuationDialog = HandoffContinuationDialog
+    // Continuation route-picker helpers exported for tests/verification only.
+    exports.normalizeContinuationCatalog = normalizeContinuationCatalog
+    exports.initialContinuationSelection = initialContinuationSelection
+    exports.continuationRouteControls = continuationRouteControls
+    exports.nextContinuationRouteSelection = nextContinuationRouteSelection
+    exports.buildContinuationStartPayload = buildContinuationStartPayload
+    // Dialog open-state store: exported for tests/verification only.
+    exports.continuationDialogStore = Object.freeze({
+      of: continuationOf,
+      open: openContinuation,
+      close: closeContinuation,
+      subscribe: subscribeContinuation,
+    })
     return module.exports
   },
 })

@@ -2,7 +2,7 @@
   "name": "dsh-handoff-review",
   "version": "0.1.0",
   "private": true,
-  "description": "OpenChamber-style handoff review for DeepSeek Harness: hand off current session changes to a linked read-only review session.",
+  "description": "OpenChamber-style handoff review for DeepSeek Harness: hand off current session changes to a linked read-only review session, or continue the work in a new ordinary session with a handoff continuation prompt.",
   "type": "module",
   "main": "./index.js",
   "exports": {
@@ -53,7 +53,9 @@
     "dsh-plugin",
     "deepseek-harness",
     "handoff",
-    "review"
+    "review",
+    "continuation",
+    "handoff-continuation"
   ],
   "license": "MIT"
 }
