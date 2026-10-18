@@ -1,0 +1,59 @@
+{
+  "name": "dsh-handoff-review",
+  "version": "0.1.0",
+  "private": true,
+  "description": "OpenChamber-style handoff review for DeepSeek Harness: hand off current session changes to a linked read-only review session.",
+  "type": "module",
+  "main": "./index.js",
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./locale/*.json": "./locale/*.json",
+    "./icon": "./icon.svg",
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "index.js",
+    "client.js",
+    "lib",
+    "cordis.patch.yml",
+    "locale/*.json",
+    "icon.svg",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@deepseek-ai/schemastery": "3.18.5",
+    "zod": "4.4.3"
+  },
+  "scripts": {
+    "check": "node --check index.js && node --check client.js && node --check lib/link-store.js && node --check lib/projections.js && node --check lib/handoff-builder.js && node --check lib/session-factory.js && node --check lib/delivery.js && node --check lib/routes.js && node --check lib/commands.js && node --check lib/history-store.js && node --check lib/config-admin.js && node --check lib/panel-data.js",
+    "test": "node --test test/*.test.js"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-conversation",
+        "@deepseek-ai/dsh-client-locale",
+        "@deepseek-ai/dsh-client-ui-settings",
+        "@deepseek-ai/dsh-client-ui-sidebar-right",
+        "@deepseek-ai/dsh-client-ui-workspace"
+      ]
+    }
+  },
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "deepseek-harness",
+    "handoff",
+    "review"
+  ],
+  "license": "MIT"
+}

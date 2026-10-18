@@ -1,0 +1,7 @@
+- insert:
+    - id: handoff-review
+      name: dsh-handoff-review
+      config:
+        maxRounds: 3
+        maxHandoffChars: 30000
+        diffPerFileChars: 6000
